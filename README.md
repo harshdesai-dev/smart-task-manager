@@ -1,22 +1,51 @@
 # Smart Task Manager
 
-A beginner-friendly task management web app with one AI feature: **Gemini generates a short task description from a task title**.
+A task management web application with Gemini AI-powered task description generation.
 
 ## Features
-- Add tasks with a title and description
-- Mark tasks complete / undo completion
-- Delete tasks
-- Generate task descriptions with Gemini AI
+- Add, edit and delete tasks
+- Mark tasks complete or pending
+- Filter tasks
+- Save tasks using browser LocalStorage
+- Generate task descriptions using Gemini AI
+- Responsive dark-themed interface
 
-## Run locally
-1. Install Python 3.10 or newer.
-2. Open a terminal in this folder.
-3. Create and activate a virtual environment (optional but recommended):
-   - Windows: `py -m venv venv` then `venv\Scripts\activate`
-   - macOS/Linux: `python3 -m venv venv` then `source venv/bin/activate`
-4. Install packages: `pip install -r requirements.txt`
-5. Copy `.env.example` to `.env` and paste your Gemini API key.
-6. Start: `python app.py`
-7. Open `http://127.0.0.1:5000`.
+## Technology Stack
+- Python
+- Flask
+- HTML, CSS and JavaScript
+- Google Gemini API
+- Browser LocalStorage
 
-The SQLite database `tasks.db` is created automatically. Keep `.env` private; never upload your API key to GitHub.
+## Local Setup
+
+1. Create virtual environment:
+   python -m venv venv
+
+2. Activate:
+   venv\Scripts\activate
+
+3. Install dependencies:
+   pip install -r requirements.txt
+
+4. Configure environment variables in .env:
+   GEMINI_API_KEY=your_api_key
+   GEMINI_MODEL=your_model
+   FLASK_SECRET_KEY=your_secret
+
+5. Run:
+   python app.py
+
+6. Open http://127.0.0.1:5000
+
+## Deployment
+
+Production server: Gunicorn
+
+Configure GEMINI_API_KEY, GEMINI_MODEL and FLASK_SECRET_KEY
+as environment variables in your hosting provider.
+
+Tasks are stored locally in the user's browser.
+They are not synchronized between devices.
+
+Never commit your .env file or API keys.

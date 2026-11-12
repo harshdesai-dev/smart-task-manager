@@ -1,83 +1,136 @@
-import os, sqlite3
-from flask import Flask, render_template, request, redirect, url_for, jsonify, flash
-from dotenv import load_dotenv
+
+import os
+
 import requests
+from dotenv import load_dotenv
+from flask import Flask, jsonify, render_template, request
 
 load_dotenv()
+
 app = Flask(__name__)
-app.secret_key = os.getenv("FLASK_SECRET_KEY", "local-development-key")
-DB = os.path.join(os.path.dirname(__file__), "tasks.db")
 
-def connect():
-    con = sqlite3.connect(DB)
-    con.row_factory = sqlite3.Row
-    return con
+# Security configuration
+app.secret_key = os.getenv("FLASK_SECRET_KEY")
 
-def init_db():
-    with connect() as con:
-        con.execute("""CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            title TEXT NOT NULL,
-            description TEXT DEFAULT '',
-            completed INTEGER DEFAULT 0
-        )""")
+if not app.secret_key:
+    raise RuntimeError("FLASK_SECRET_KEY is missing from the .env file.")
+
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "").strip()
+
 
 def ask_gemini(prompt):
-    key = os.getenv("GEMINI_API_KEY")
-    if not key:
-        raise ValueError("Add your Gemini API key to the .env file.")
-    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-    response = requests.post(
-        url, params={"key": key},
-        json={"contents": [{"parts": [{"text": prompt}]}]},
-        timeout=25
+    """Generate a response using the Gemini API."""
+
+    if not GEMINI_API_KEY:
+        raise ValueError("Gemini API key is not configured.")
+
+    if not GEMINI_MODEL:
+        raise ValueError("Gemini model is not configured.")
+
+    url = (
+        "https://generativelanguage.googleapis.com/"
+        f"v1beta/models/{GEMINI_MODEL}:generateContent"
     )
-    response.raise_for_status()
+
+    response = requests.post(
+        url,
+        params={"key": GEMINI_API_KEY},
+        json={
+            "contents": [
+                {
+                    "parts": [{"text": prompt}]
+                }
+            ]
+        },
+        timeout=30
+    )
+
+    if not response.ok:
+        app.logger.error(
+            "Gemini API returned HTTP %s",
+            response.status_code
+        )
+        raise RuntimeError(
+            f"Gemini API request failed (HTTP {response.status_code})."
+        )
+
     data = response.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+    candidates = data.get("candidates", [])
+
+    if not candidates:
+        raise RuntimeError(
+            "Gemini did not generate a response. Try another prompt."
+        )
+
+    parts = candidates[0].get("content", {}).get("parts", [])
+
+    result = " ".join(
+        part.get("text", "")
+        for part in parts
+        if part.get("text")
+    ).strip()
+
+    if not result:
+        raise RuntimeError("Gemini returned an empty response.")
+
+    return result
+
 
 @app.route("/")
 def index():
-    with connect() as con:
-        tasks = con.execute("SELECT * FROM tasks ORDER BY id DESC").fetchall()
-    return render_template("index.html", tasks=tasks)
+    # Tasks will be loaded and displayed by browser LocalStorage.
+    return render_template("index.html")
 
-@app.post("/add")
-def add():
-    title = request.form.get("title", "").strip()
-    description = request.form.get("description", "").strip()
-    if title:
-        with connect() as con:
-            con.execute("INSERT INTO tasks(title, description) VALUES (?, ?)", (title, description))
-    return redirect(url_for("index"))
 
-@app.post("/toggle/<int:task_id>")
-def toggle(task_id):
-    with connect() as con:
-        con.execute("UPDATE tasks SET completed = CASE completed WHEN 0 THEN 1 ELSE 0 END WHERE id=?", (task_id,))
-    return redirect(url_for("index"))
-
-@app.post("/delete/<int:task_id>")
-def delete(task_id):
-    with connect() as con:
-        con.execute("DELETE FROM tasks WHERE id=?", (task_id,))
-    return redirect(url_for("index"))
-
-@app.post("/ai-description")
+@app.route("/ai-description", methods=["POST"])
 def ai_description():
-    title = request.json.get("title", "").strip()
+    data = request.get_json(silent=True) or {}
+
+    title = data.get("title", "")
+
+    if not isinstance(title, str):
+        return jsonify(error="Invalid task title."), 400
+
+    title = title.strip()
+
     if not title:
         return jsonify(error="Enter a task title first."), 400
+
+    if len(title) > 200:
+        return jsonify(error="Task title must be under 200 characters."), 400
+
+    prompt = (
+        "Write a clear, practical 2-3 sentence description for this task. "
+        "Include a useful next action. Do not add a heading. "
+        f"Task: {title}"
+    )
+
     try:
-        result = ask_gemini(
-            "Write a clear, practical 2-3 sentence description for this task. "
-            "Include a useful next action. Do not add a heading. Task: " + title
-        )
+        result = ask_gemini(prompt)
         return jsonify(description=result)
-    except Exception as e:
-        return jsonify(error=f"AI request failed: {e}"), 502
+
+    except ValueError as error:
+        return jsonify(error=str(error)), 503
+
+    except Exception:
+        app.logger.exception("AI description generation failed.")
+        return jsonify(
+            error="AI request failed. Check your API configuration and try again."
+        ), 502
+
+
+@app.route("/health")
+def health():
+    return jsonify(
+        status="ok",
+        application="Smart Task Manager",
+        database="disabled",
+        ai_configured=bool(GEMINI_API_KEY and GEMINI_MODEL)
+    )
+
 
 if __name__ == "__main__":
-    init_db()
-    app.run(debug=True)
+    debug_mode = os.getenv("FLASK_DEBUG", "0") == "1"
+    app.run(debug=debug_mode)

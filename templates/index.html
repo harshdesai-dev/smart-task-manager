@@ -1,29 +1,522 @@
+
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Smart Task Manager</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
-<body><main class="wrap">
-<header><div><p class="eyebrow">AI-POWERED PRODUCTIVITY</p><h1>Smart Task Manager</h1><p class="muted">Plan clearly. Execute consistently.</p></div><span class="tag">Gemini AI</span></header>
-<section class="panel"><h2>Add a task</h2>
-<form method="post" action="/add" id="taskForm">
-<label>Task title</label><input name="title" id="title" placeholder="e.g. Prepare DBMS presentation" required>
-<div class="row"><button type="button" class="secondary" id="generate">✨ Generate description with AI</button><span id="status" class="muted"></span></div>
-<label>Description</label><textarea name="description" id="description" rows="3" placeholder="Add details or generate them with AI..."></textarea>
-<button type="submit">Add task</button></form></section>
-<section class="panel"><div class="row between"><h2>Your tasks</h2><span class="tag">{{ tasks|length }} total</span></div>
-{% for task in tasks %}<article class="task {% if task.completed %}done{% endif %}">
-<div class="tasktext"><strong>{{ task.title }}</strong><p>{{ task.description }}</p></div>
-<div class="actions"><form method="post" action="/toggle/{{ task.id }}"><button class="secondary">{{ 'Undo' if task.completed else 'Complete' }}</button></form>
-<form method="post" action="/delete/{{ task.id }}"><button class="danger">Delete</button></form></div></article>
-{% else %}<p class="muted">No tasks yet. Add your first task above.</p>{% endfor %}
-</section><footer>Mini Project • Flask + SQLite + Gemini API</footer></main>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Task Manager</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+<main class="wrap">
+
+    <header>
+        <div>
+            <p class="eyebrow">AI-POWERED PRODUCTIVITY</p>
+            <h1>Smart Task Manager</h1>
+            <p class="muted">Plan clearly. Execute consistently.</p>
+        </div>
+        <span class="tag">Gemini AI</span>
+    </header>
+
+    <!-- Add / Edit Task -->
+    <section class="panel">
+        <h2 id="formHeading">Add a task</h2>
+
+        <form id="taskForm">
+            <label for="title">Task title</label>
+            <input
+                type="text"
+                id="title"
+                maxlength="200"
+                placeholder="e.g. Prepare DBMS presentation"
+                required
+            >
+
+            <div class="row">
+                <button type="button" class="secondary" id="generate">
+                    ✨ Generate description with AI
+                </button>
+                <span id="status" class="muted" role="status"></span>
+            </div>
+
+            <label for="description">Description</label>
+            <textarea
+                id="description"
+                rows="3"
+                placeholder="Add details or generate them with AI..."
+            ></textarea>
+
+            <div class="row">
+                <button type="submit" id="submitTask">Add task</button>
+                <button type="button" class="secondary hidden" id="cancelEdit">
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </section>
+
+    <!-- Task Statistics -->
+    <section class="panel">
+        <div class="row between">
+            <h2>Your tasks</h2>
+            <span class="tag" id="totalCount">0 total</span>
+        </div>
+
+        <div class="stats">
+            <div class="stat">
+                <strong id="pendingCount">0</strong>
+                <span>Pending</span>
+            </div>
+            <div class="stat">
+                <strong id="completedCount">0</strong>
+                <span>Completed</span>
+            </div>
+        </div>
+
+        <!-- Task Filters -->
+        <div class="filters">
+            <button type="button" class="filter active" data-filter="all">
+                All
+            </button>
+            <button type="button" class="filter" data-filter="pending">
+                Pending
+            </button>
+            <button type="button" class="filter" data-filter="completed">
+                Completed
+            </button>
+        </div>
+
+        <!-- Task List -->
+        <div id="taskList"></div>
+
+        <p id="emptyMessage" class="muted">
+            No tasks yet. Add your first task above.
+        </p>
+    </section>
+
+    <footer>Mini Project • Flask + LocalStorage + Gemini API</footer>
+
+</main>
+
 <script>
-document.getElementById('generate').addEventListener('click', async () => {
- const title=document.getElementById('title').value.trim(), status=document.getElementById('status'), btn=document.getElementById('generate');
- if(!title){status.textContent='Enter a task title first.';return;}
- btn.disabled=true; status.textContent='Generating...';
- try { const r=await fetch('/ai-description',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})});
- const d=await r.json(); if(!r.ok) throw new Error(d.error||'Request failed');
- document.getElementById('description').value=d.description; status.textContent='AI description ready.';
- } catch(e){status.textContent=e.message;} finally{btn.disabled=false;}
+"use strict";
+
+// ======================================
+// 1. APPLICATION CONFIGURATION
+// ======================================
+
+const STORAGE_KEY = "smart_task_manager_tasks_v1";
+
+let tasks = [];
+let currentFilter = "all";
+let editingTaskId = null;
+
+// ======================================
+// 2. DOM ELEMENTS
+// ======================================
+
+const taskForm = document.getElementById("taskForm");
+const titleInput = document.getElementById("title");
+const descriptionInput = document.getElementById("description");
+const taskList = document.getElementById("taskList");
+const emptyMessage = document.getElementById("emptyMessage");
+
+const totalCount = document.getElementById("totalCount");
+const pendingCount = document.getElementById("pendingCount");
+const completedCount = document.getElementById("completedCount");
+
+const formHeading = document.getElementById("formHeading");
+const submitTask = document.getElementById("submitTask");
+const cancelEdit = document.getElementById("cancelEdit");
+
+const generateButton = document.getElementById("generate");
+const statusMessage = document.getElementById("status");
+
+// ======================================
+// 3. LOCAL STORAGE
+// ======================================
+
+function loadTasks() {
+    try {
+        const savedTasks = localStorage.getItem(STORAGE_KEY);
+
+        if (!savedTasks) {
+            tasks = [];
+            return;
+        }
+
+        const parsedTasks = JSON.parse(savedTasks);
+
+        if (!Array.isArray(parsedTasks)) {
+            throw new Error("Invalid saved task data.");
+        }
+
+        tasks = parsedTasks.filter(task =>
+            task &&
+            typeof task.id === "string" &&
+            typeof task.title === "string" &&
+            typeof task.description === "string" &&
+            typeof task.completed === "boolean"
+        );
+
+    } catch (error) {
+        console.error("Unable to load tasks:", error);
+        tasks = [];
+        statusMessage.textContent = "Saved task data could not be loaded.";
+    }
+}
+
+function saveTasks() {
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks));
+        return true;
+    } catch (error) {
+        console.error("Unable to save tasks:", error);
+        statusMessage.textContent =
+            "Unable to save tasks. Check browser storage.";
+        return false;
+    }
+}
+
+// ======================================
+// 4. TASK RENDERING
+// ======================================
+
+function createElement(tag, className, text) {
+    const element = document.createElement(tag);
+
+    if (className) {
+        element.className = className;
+    }
+
+    if (text !== undefined) {
+        element.textContent = text;
+    }
+
+    return element;
+}
+
+function renderTasks() {
+    taskList.replaceChildren();
+
+    const filteredTasks = tasks.filter(task => {
+        if (currentFilter === "pending") {
+            return !task.completed;
+        }
+
+        if (currentFilter === "completed") {
+            return task.completed;
+        }
+
+        return true;
+    });
+
+    const pending = tasks.filter(task => !task.completed).length;
+    const completed = tasks.filter(task => task.completed).length;
+
+    totalCount.textContent = `${tasks.length} total`;
+    pendingCount.textContent = pending;
+    completedCount.textContent = completed;
+
+    emptyMessage.hidden = filteredTasks.length > 0;
+
+    if (tasks.length === 0) {
+        emptyMessage.textContent =
+            "No tasks yet. Add your first task above.";
+    } else if (filteredTasks.length === 0) {
+        emptyMessage.textContent =
+            "No tasks found in this category.";
+    }
+
+    filteredTasks.forEach(task => {
+        const article = createElement(
+            "article",
+            task.completed ? "task done" : "task"
+        );
+
+        const taskText = createElement("div", "tasktext");
+
+        const heading = createElement("strong", "", task.title);
+        const description = createElement(
+            "p",
+            "",
+            task.description || "No description added."
+        );
+
+        taskText.append(heading, description);
+
+        const actions = createElement("div", "actions");
+
+        const completeButton = createElement(
+            "button",
+            "secondary",
+            task.completed ? "Undo" : "Complete"
+        );
+
+        completeButton.type = "button";
+        completeButton.addEventListener("click", () => {
+            toggleTask(task.id);
+        });
+
+        const editButton = createElement(
+            "button",
+            "secondary",
+            "Edit"
+        );
+
+        editButton.type = "button";
+        editButton.addEventListener("click", () => {
+            editTask(task.id);
+        });
+
+        const deleteButton = createElement(
+            "button",
+            "danger",
+            "Delete"
+        );
+
+        deleteButton.type = "button";
+        deleteButton.addEventListener("click", () => {
+            deleteTask(task.id);
+        });
+
+        actions.append(
+            completeButton,
+            editButton,
+            deleteButton
+        );
+
+        article.append(taskText, actions);
+        taskList.appendChild(article);
+    });
+}
+
+// ======================================
+// 5. ADD TASK
+// ======================================
+
+function generateId() {
+    if (crypto.randomUUID) {
+        return crypto.randomUUID();
+    }
+
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+taskForm.addEventListener("submit", event => {
+    event.preventDefault();
+
+    const title = titleInput.value.trim();
+    const description = descriptionInput.value.trim();
+
+    if (!title) {
+        statusMessage.textContent = "Enter a task title.";
+        return;
+    }
+
+    if (editingTaskId) {
+        const task = tasks.find(
+            item => item.id === editingTaskId
+        );
+
+        if (!task) {
+            resetForm();
+            return;
+        }
+
+        const oldTitle = task.title;
+        const oldDescription = task.description;
+
+        task.title = title;
+        task.description = description;
+
+        if (!saveTasks()) {
+            task.title = oldTitle;
+            task.description = oldDescription;
+            return;
+        }
+
+        statusMessage.textContent = "Task updated successfully.";
+
+    } else {
+        const newTask = {
+            id: generateId(),
+            title,
+            description,
+            completed: false,
+            createdAt: new Date().toISOString()
+        };
+
+        tasks.unshift(newTask);
+
+        if (!saveTasks()) {
+            tasks.shift();
+            return;
+        }
+
+        statusMessage.textContent = "Task added successfully.";
+    }
+
+    resetForm();
+    renderTasks();
 });
-</script></body></html>
+
+// ======================================
+// 6. EDIT TASK
+// ======================================
+
+function editTask(id) {
+    const task = tasks.find(item => item.id === id);
+
+    if (!task) return;
+
+    editingTaskId = id;
+
+    titleInput.value = task.title;
+    descriptionInput.value = task.description;
+
+    formHeading.textContent = "Edit task";
+    submitTask.textContent = "Update task";
+    cancelEdit.classList.remove("hidden");
+
+    statusMessage.textContent = "Editing selected task.";
+
+    titleInput.focus();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+function resetForm() {
+    taskForm.reset();
+
+    editingTaskId = null;
+
+    formHeading.textContent = "Add a task";
+    submitTask.textContent = "Add task";
+
+    cancelEdit.classList.add("hidden");
+}
+
+cancelEdit.addEventListener("click", resetForm);
+
+// ======================================
+// 7. COMPLETE / UNDO TASK
+// ======================================
+
+function toggleTask(id) {
+    const task = tasks.find(item => item.id === id);
+
+    if (!task) return;
+
+    task.completed = !task.completed;
+
+    if (!saveTasks()) {
+        task.completed = !task.completed;
+        return;
+    }
+
+    renderTasks();
+}
+
+// ======================================
+// 8. DELETE TASK
+// ======================================
+
+function deleteTask(id) {
+    const index = tasks.findIndex(item => item.id === id);
+
+    if (index === -1) return;
+
+    const deletedTask = tasks[index];
+
+    if (!window.confirm(`Delete "${deletedTask.title}"?`)) {
+        return;
+    }
+
+    tasks.splice(index, 1);
+
+    if (!saveTasks()) {
+        tasks.splice(index, 0, deletedTask);
+        return;
+    }
+
+    if (editingTaskId === id) {
+        resetForm();
+    }
+
+    statusMessage.textContent = "Task deleted.";
+    renderTasks();
+}
+
+// ======================================
+// 9. TASK FILTERS
+// ======================================
+
+document.querySelectorAll(".filter").forEach(button => {
+    button.addEventListener("click", () => {
+        currentFilter = button.dataset.filter;
+
+        document.querySelectorAll(".filter").forEach(item => {
+            item.classList.toggle(
+                "active",
+                item === button
+            );
+        });
+
+        renderTasks();
+    });
+});
+
+// ======================================
+// 10. GEMINI AI DESCRIPTION
+// ======================================
+
+generateButton.addEventListener("click", async () => {
+    const title = titleInput.value.trim();
+
+    if (!title) {
+        statusMessage.textContent = "Enter a task title first.";
+        titleInput.focus();
+        return;
+    }
+
+    generateButton.disabled = true;
+    statusMessage.textContent = "Generating description...";
+
+    try {
+        const response = await fetch("/ai-description", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ title })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            throw new Error(data.error || "AI request failed.");
+        }
+
+        descriptionInput.value = data.description;
+
+        statusMessage.textContent = "AI description ready.";
+
+    } catch (error) {
+        statusMessage.textContent = error.message;
+    } finally {
+        generateButton.disabled = false;
+    }
+});
+
+// ======================================
+// 11. INITIALIZE APPLICATION
+// ======================================
+
+loadTasks();
+renderTasks();
+
+</script>
+</body>
+</html>
