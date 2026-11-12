@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Task Manager</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body><main class="wrap">
+<header><div><p class="eyebrow">AI-POWERED PRODUCTIVITY</p><h1>Smart Task Manager</h1><p class="muted">Plan clearly. Execute consistently.</p></div><span class="tag">Gemini AI</span></header>
+<section class="panel"><h2>Add a task</h2>
+<form method="post" action="/add" id="taskForm">
+<label>Task title</label><input name="title" id="title" placeholder="e.g. Prepare DBMS presentation" required>
+<div class="row"><button type="button" class="secondary" id="generate">✨ Generate description with AI</button><span id="status" class="muted"></span></div>
+<label>Description</label><textarea name="description" id="description" rows="3" placeholder="Add details or generate them with AI..."></textarea>
+<button type="submit">Add task</button></form></section>
+<section class="panel"><div class="row between"><h2>Your tasks</h2><span class="tag">{{ tasks|length }} total</span></div>
+{% for task in tasks %}<article class="task {% if task.completed %}done{% endif %}">
+<div class="tasktext"><strong>{{ task.title }}</strong><p>{{ task.description }}</p></div>
+<div class="actions"><form method="post" action="/toggle/{{ task.id }}"><button class="secondary">{{ 'Undo' if task.completed else 'Complete' }}</button></form>
+<form method="post" action="/delete/{{ task.id }}"><button class="danger">Delete</button></form></div></article>
+{% else %}<p class="muted">No tasks yet. Add your first task above.</p>{% endfor %}
+</section><footer>Mini Project • Flask + SQLite + Gemini API</footer></main>
+<script>
+document.getElementById('generate').addEventListener('click', async () => {
+ const title=document.getElementById('title').value.trim(), status=document.getElementById('status'), btn=document.getElementById('generate');
+ if(!title){status.textContent='Enter a task title first.';return;}
+ btn.disabled=true; status.textContent='Generating...';
+ try { const r=await fetch('/ai-description',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title})});
+ const d=await r.json(); if(!r.ok) throw new Error(d.error||'Request failed');
+ document.getElementById('description').value=d.description; status.textContent='AI description ready.';
+ } catch(e){status.textContent=e.message;} finally{btn.disabled=false;}
+});
+</script></body></html>
